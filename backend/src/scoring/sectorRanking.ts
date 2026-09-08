@@ -2,36 +2,37 @@ import { getAiClassifierClient } from "../integrations/ai";
 import { parseSectorRankingJson } from "../integrations/ai/parseSectorRanking";
 import { buildSectorRankingUserPrompt, SECTOR_RANKING_SYSTEM_PROMPT } from "../integrations/ai/sectorRankingPrompt";
 import type { SectorAggregateInput } from "../integrations/ai/sectorRankingPrompt";
-import type { CompositeScoreResult, SectorRankingResult } from "./types";
+import type { ScreenerCandidate } from "../screener/strategies/types";
+import type { SectorRankingResult } from "./types";
 
 const MAX_TOP_SYMBOLS = 5;
 
 /**
- * Agreguje wyniki bieżącego cyklu screenera per sektor. Spółki bez sektora
- * (PL/EU bez dostępu do fundamentów — patrz drawdown.ts) są pomijane: nie da
- * się ich sensownie przypisać do branży bez zgadywania.
+ * Agreguje kandydatów bieżącego cyklu per sektor. Tylko Strategia A
+ * (overreacted_drawdown) liczy pełny excess_drawdown/fundamenty w sensie
+ * porównywalnym między spółkami — kandydaci z Strategii B/C mają inną
+ * semantykę `score`, więc są pomijani w tej agregacji. Spółki bez sektora
+ * (PL/EU bez dostępu do fundamentów) też są pomijane — nie da się ich
+ * sensownie przypisać do branży bez zgadywania.
  */
-export function aggregateBySector(results: CompositeScoreResult[]): SectorAggregateInput[] {
-  const bySector = new Map<string, CompositeScoreResult[]>();
-  for (const result of results) {
-    const sector = result.drawdown.sector;
-    if (!sector) continue;
+export function aggregateBySector(candidates: ScreenerCandidate[]): SectorAggregateInput[] {
+  const relevant = candidates.filter((c) => c.strategy === "overreacted_drawdown" && c.sector);
+  const bySector = new Map<string, ScreenerCandidate[]>();
+  for (const candidate of relevant) {
+    const sector = candidate.sector as string;
     const list = bySector.get(sector) ?? [];
-    list.push(result);
+    list.push(candidate);
     bySector.set(sector, list);
   }
 
   return Array.from(bySector.entries()).map(([sector, items]) => {
     const avgExcessDrawdownScore =
-      items.reduce((sum, r) => sum + r.drawdown.excessDrawdownScore, 0) / items.length;
+      items.reduce((sum, c) => sum + (c.excessDrawdownScore ?? 0), 0) / items.length;
 
-    const withFundamentals = items.filter(
-      (r) => r.fundamentals.available && r.fundamentals.fundamentalHealthScore !== null
-    );
+    const withFundamentals = items.filter((c) => c.fundamentalAvailable && c.fundamentalHealthScore !== null);
     const avgFundamentalHealthScore =
       withFundamentals.length > 0
-        ? withFundamentals.reduce((sum, r) => sum + (r.fundamentals.fundamentalHealthScore ?? 0), 0) /
-          withFundamentals.length
+        ? withFundamentals.reduce((sum, c) => sum + (c.fundamentalHealthScore ?? 0), 0) / withFundamentals.length
         : null;
 
     return {
@@ -41,9 +42,9 @@ export function aggregateBySector(results: CompositeScoreResult[]): SectorAggreg
       avgFundamentalHealthScore,
       topSymbols: items
         .slice()
-        .sort((a, b) => b.scoreBreakdown.total - a.scoreBreakdown.total)
+        .sort((a, b) => b.score - a.score)
         .slice(0, MAX_TOP_SYMBOLS)
-        .map((r) => r.symbol),
+        .map((c) => c.symbol),
     };
   });
 }
@@ -53,8 +54,8 @@ export function aggregateBySector(results: CompositeScoreResult[]): SectorAggreg
  * (RSS z CLAUDE.md nie jest jeszcze zaimplementowane) — model AI ranguje
  * wyłącznie na podstawie zagregowanych wyników bieżącego cyklu screenera.
  */
-export async function rankSectors(results: CompositeScoreResult[]): Promise<SectorRankingResult[]> {
-  const aggregates = aggregateBySector(results);
+export async function rankSectors(candidates: ScreenerCandidate[]): Promise<SectorRankingResult[]> {
+  const aggregates = aggregateBySector(candidates);
   if (aggregates.length === 0) {
     return [];
   }

@@ -70,14 +70,6 @@ export interface CompositeScoreBreakdown {
   max: number; // 100 gdy wszystkie 3 warstwy dostępne, mniej gdy część brakuje
 }
 
-export interface CompositeScoreResult {
-  symbol: string;
-  drawdown: DrawdownScoreResult;
-  fundamentals: FundamentalHealthResult;
-  aiClassification: AiClassificationResult | null; // null gdy Warstwa 3 zawiodła (np. brak/limit API)
-  scoreBreakdown: CompositeScoreBreakdown;
-}
-
 export interface SectorRankingResult {
   sector: string;
   rank: number;

@@ -59,6 +59,52 @@ score = 0.35 * excess_drawdown_normalized
 ```
 Próg wejścia na listę kandydatów: `score > 70` (skala 0–100).
 
+Uwaga: warstwy 1-3 i composite_score powyżej opisują konkretnie **Strategię A** poniżej —
+pozostałe strategie mają własną logikę triggera/scoringu, nie każda liczy fundamenty czy
+excess_drawdown w tym samym sensie.
+
+## Selekcja wielostrategiowa (dodane po MVP) — zaimplementowane
+Screener nie jest już jedną logiką, tylko listą pluggable strategii — każda dostaje watchlistę
+per rynek i sama decyduje o triggerze oraz liczy swój score/uzasadnienie AI. Wspólny interfejs
+`Strategy` w `/backend/src/screener/strategies/types.ts`; aktywne strategie zarejestrowane
+w `/backend/src/screener/strategies/index.ts` (`ACTIVE_STRATEGIES`).
+
+### Strategia A — `overreactedDrawdown.ts`
+Dotychczasowa logika (Warstwy 1-3 + composite_score opisane wyżej), bez zmian w scoringu —
+tylko przepakowana pod wspólny interfejs. Jedyna strategia licząca sektorowy `excess_drawdown`
+i fundamenty w sensie porównywalnym między spółkami — tylko ona zasila ranking branż (Warstwa 0).
+
+### Strategia B — `earningsBeatDrop.ts`
+- Dane: FMP `/earnings` (per-symbol EPS actual/estimate — zweryfikowane; `/earnings-calendar`
+  rynkowy jest zablokowany na darmowym planie, 402) — **tylko rynek US**, EODHD nie ma
+  zweryfikowanego odpowiednika dla PL/EU
+- Trigger: ostatni raport ma `epsActual > epsEstimated` (beat) ORAZ cena spadła o >5%
+  (konfigurowalne, `MIN_DROP_AFTER_BEAT`) w oknie 3-5 dni handlowych po publikacji
+- Prompt AI ma inny fokus niż Strategia A: wyjaśnia DLACZEGO rynek zignorował dobre wyniki
+  (obniżone guidance, sell-the-news, słabsze inne metryki...), nie klasyfikuje do sztywnych
+  kategorii przyczyny — patrz `integrations/ai/earningsBeatDropPrompt.ts`
+
+### Strategia C — `insiderAccumulation.ts`
+- Dane: Finnhub `/stock/insider-transactions` (SEC Form 4 — zweryfikowane; specyfika US, więc
+  **tylko rynek US**) — filtrowane do `transactionCode === "P"` (zakup rynkowy) i
+  `isDerivative === false` (realne akcje, nie opcje/granty)
+- Trigger: 2+ różnych insiderów kupujących w oknie 90 dni (konfigurowalne) ORAZ cena >10% poniżej
+  90-dniowego maksimum ("okno spadku")
+- AI ocenia realność sygnału (liczba insiderów, rozłożenie w czasie, bliskość dołka) —
+  patrz `integrations/ai/insiderAccumulationPrompt.ts`
+
+### Strategia D — short squeeze
+**Nie zaimplementowana.** Do potwierdzenia z użytkownikiem po ocenie działania A-C na żywo.
+
+### Model danych / UI
+- `screener_results` ma teraz `strategy` + `trigger_detail` zamiast pól specyficznych tylko dla
+  Strategii A (`beta`, `benchmark_symbol`, `rsi14`, `ai_cause` usunięte — `ai_cause` jest teraz
+  częścią tekstu `ai_reasoning` dla Strategii A)
+- Klucz unikalności to teraz `(symbol, strategy)`, nie sam `symbol` — jedna spółka może być
+  kandydatem z kilku strategii naraz, to osobne wiersze
+- CandidatesScreen pokazuje badge ze źródłem (`STRATEGY_LABELS`: "Przesadzona reakcja" /
+  "Dobre wyniki, zły odbiór" / "Akumulacja insiderów")
+
 ## Logika sprzedaży / monitoringu
 Trigger na pogorszenie fundamentów jest ważniejszy niż sam ruch ceny:
 - **Take-profit**: cena wraca do mediany historycznego P/E (5 lat) lub +X% od zakupu (konfigurowalne per pozycja)
@@ -77,7 +123,7 @@ Trigger na pogorszenie fundamentów jest ważniejszy niż sam ruch ceny:
   /src
     /integrations   - klienci API (finnhub.ts, fmp.ts, eodhd.ts, ai/)
     /scoring         - drawdown.ts, fundamentals.ts, aiClassifier.ts, compositeScore.ts, sectorRanking.ts
-    /screener        - runScreener.ts (główny pipeline)
+    /screener        - runScreener.ts (główny pipeline), /strategies (Strategy A/B/C, patrz sekcja "Selekcja wielostrategiowa")
     /jobs            - cron.ts, portfolioMonitor.ts
     /db              - schema.sql, klient supabase
   .env.example

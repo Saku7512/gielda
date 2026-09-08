@@ -35,7 +35,12 @@ let quotaExhausted = false;
 function checkForFmpErrorBody(body: unknown, symbolForErrors: string): void {
   if (!body || typeof body !== "object" || Array.isArray(body) || !("Error Message" in body)) return;
   const message = String((body as Record<string, unknown>)["Error Message"]);
-  if (/limit/i.test(message)) {
+  // Uwaga: dopasowanie musi być wąskie — "Limit Reach" to realne wyczerpanie
+  // dziennego limitu, ale np. "'limit' must be between 0 and 5" (zły parametr
+  // zapytania, nic wspólnego z limitem dziennym) też zawiera słowo "limit" i
+  // wcześniej fałszywie zatruwał cały bieg (quotaExhausted) po jednym błędnym
+  // parametrze — zweryfikowane empirycznie 2026-09-08.
+  if (/limit reach/i.test(message)) {
     throw new FmpQuotaError(symbolForErrors);
   }
   throw new Error(`FMP error dla ${symbolForErrors}: ${message}`);
@@ -262,6 +267,31 @@ export async function getRatios(
     cacheKey(symbol, "ratios", params),
     CACHE_TTL.ONE_DAY,
     () => fmpGet<FmpRatios[]>("/ratios", params, symbol)
+  );
+  return data;
+}
+
+export interface FmpEarning {
+  date: string;
+  symbol: string;
+  epsActual: number | null;
+  epsEstimated: number | null;
+  revenueActual: number | null;
+  revenueEstimated: number | null;
+}
+
+/**
+ * Historia wyników per spółka (data raportu + EPS/revenue actual vs estimate).
+ * Zweryfikowane empirycznie 2026-09-08: /stable/earnings-calendar (rynkowy,
+ * po dacie) jest zablokowany (402) na tym planie, ale /stable/earnings
+ * (per-symbol) działa. Używane przez strategię earningsBeatDrop.
+ */
+export async function getEarnings(symbol: string, limit: number): Promise<FmpEarning[]> {
+  const params = { symbol, limit };
+  const { data } = await withCache(
+    cacheKey(symbol, "earnings", params),
+    CACHE_TTL.ONE_DAY,
+    () => fmpGet<FmpEarning[]>("/earnings", params, symbol)
   );
   return data;
 }

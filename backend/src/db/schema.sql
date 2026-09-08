@@ -1,48 +1,48 @@
--- UWAGA: przebudowa schematu po dodaniu obsługi rynków PL/EU (nowe kolumny
--- market/exchange/fundamental_available) — usuwa istniejące dane w
--- screener_results. To tylko dane testowe z tej sesji, nie dane użytkownika,
--- więc drop+recreate zamiast ostrożnej migracji ALTER TABLE.
+-- UWAGA: przebudowa schematu po refaktorze na architekturę pluggable strategii
+-- (kolumny strategy/trigger_detail, usunięte pola specyficzne tylko dla
+-- Strategii A jak beta/benchmark_symbol/rsi14/ai_cause — patrz
+-- screener/strategies/). Usuwa istniejące dane w screener_results — to
+-- tylko dane testowe z tej sesji, nie dane użytkownika.
 
 drop view if exists screener_latest_results;
 drop table if exists screener_results;
 
--- Wyniki screenera (Warstwy 1+2+3) — insert-only, żeby zachować historię per
--- spółka. Ekran kandydatów w apce czyta najnowszy wiersz na symbol (patrz
--- widok screener_latest_results poniżej); historia jest potrzebna później do
+-- Wyniki screenera — insert-only, żeby zachować historię per (symbol, strategy).
+-- Ekran kandydatów w apce czyta najnowszy wiersz na (symbol, strategy) — patrz
+-- widok screener_latest_results poniżej; historia jest potrzebna później do
 -- monitoringu pozycji (Warstwa "fundamental stop-loss" z CLAUDE.md).
 create table screener_results (
   id bigint generated always as identity primary key,
   symbol text not null,
   market text not null,                    -- 'US' | 'PL' | 'EU'
-  exchange text not null,                  -- 'US' (US) albo kod EODHD np. 'WAR', 'XETRA', 'PA', 'AS'
+  exchange text not null,                  -- 'US' albo kod EODHD np. 'WAR', 'XETRA', 'PA', 'AS'
+  strategy text not null,                  -- 'overreacted_drawdown' | 'earnings_beat_drop' | 'insider_accumulation'
+  trigger_detail text not null,            -- krótki opis co spowodowało trigger danej strategii
   company_name text not null,
   sector text,                             -- null gdy nieznany (PL/EU bez dostępu do fundamentów)
   current_price numeric not null,
-  benchmark_symbol text,                   -- null dla PL/EU (brak zweryfikowanego indeksu benchmarkowego)
-  beta numeric not null,
-  excess_drawdown numeric not null,
-  excess_drawdown_score numeric not null,
-  rsi14 numeric not null,
-  fundamental_available boolean not null,  -- false dla PL/EU na darmowym planie EODHD
+  excess_drawdown numeric,                 -- znaczenie zależne od strategii, patrz strategies/*.ts
+  excess_drawdown_score numeric,
+  fundamental_available boolean not null,  -- false gdy strategia nie liczy fundamentów (PL/EU, Strategia B/C)
   fundamental_health_score numeric,        -- null gdy fundamental_available = false
-  fundamental_checks jsonb,
-  ai_provider text,
-  ai_cause text,
-  ai_confidence numeric,
   ai_reasoning text,
-  composite_score numeric not null,        -- suma dostępnych warstw
-  composite_score_max numeric not null,    -- maksimum możliwe przy dostępnych warstwach (patrz compositeScore.ts)
+  ai_confidence numeric,
+  composite_score numeric not null,        -- suma dostępnych warstw, semantyka per strategia
+  composite_score_max numeric not null,    -- maksimum możliwe przy dostępnych warstwach
   scored_at timestamptz not null default now()
 );
 
-create index screener_results_symbol_scored_at_idx on screener_results (symbol, scored_at desc);
+create index screener_results_symbol_strategy_scored_at_idx
+  on screener_results (symbol, strategy, scored_at desc);
 create index screener_results_market_idx on screener_results (market);
+create index screener_results_strategy_idx on screener_results (strategy);
 
--- Najnowszy wynik per symbol — to z tego korzysta CandidatesScreen w apce.
+-- Najnowszy wynik per (symbol, strategy) — jedna spółka może być kandydatem
+-- z kilku strategii naraz, to osobne wiersze w apce.
 create or replace view screener_latest_results as
-select distinct on (symbol) *
+select distinct on (symbol, strategy) *
 from screener_results
-order by symbol, scored_at desc;
+order by symbol, strategy, scored_at desc;
 
 alter table screener_results enable row level security;
 

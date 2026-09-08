@@ -75,3 +75,27 @@ export async function getCompanyNews(
   );
   return data;
 }
+
+export interface FinnhubInsiderTransaction {
+  name: string;
+  share: number;
+  change: number;
+  filingDate: string;
+  transactionDate: string;
+  transactionCode: string; // "P" = zakup na rynku otwartym, "S" = sprzedaż, "A"/"M"/"G" itd.
+  transactionPrice: number;
+  isDerivative: boolean;
+}
+
+/**
+ * Transakcje insiderów (SEC Form 4). Zweryfikowane empirycznie 2026-09-08 —
+ * dostępne na darmowym planie. Używane przez strategię insiderAccumulation.
+ */
+export async function getInsiderTransactions(symbol: string): Promise<FinnhubInsiderTransaction[]> {
+  const { data } = await withCache(
+    `finnhub:insider-transactions:${symbol}`,
+    CACHE_TTL.ONE_DAY,
+    () => finnhubGet<{ data: FinnhubInsiderTransaction[] }>("/stock/insider-transactions", { symbol })
+  );
+  return data.data ?? [];
+}

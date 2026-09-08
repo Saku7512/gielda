@@ -3,78 +3,11 @@ import { saveScreenerResults } from "../db/screenerResultsRepository";
 import { saveSectorRankings } from "../db/sectorRankingsRepository";
 import { eodhdRequestCount } from "../integrations/eodhd";
 import { fmpRequestCount } from "../integrations/fmp";
-import { finnhubRequestCount, getQuote } from "../integrations/finnhub";
-import { classifyDrawdownCause } from "../scoring/aiClassifier";
-import { computeCompositeScore } from "../scoring/compositeScore";
-import { computeDrawdownScore, computeDrawdownScoreEodhd } from "../scoring/drawdown";
-import { computeFundamentalHealthScore, unavailableFundamentalHealth } from "../scoring/fundamentals";
+import { finnhubRequestCount } from "../integrations/finnhub";
 import { rankSectors } from "../scoring/sectorRanking";
-import type { CompositeScoreResult, DrawdownScoreResult, FundamentalHealthResult, Market } from "../scoring/types";
-
-interface ScreenerRow {
-  ticker: string;
-  market: Market;
-  livePrice: string;
-  excessDrawdown: string;
-  excessDrawdownScore: number;
-  fundamentalHealthScore: string;
-  aiCause: string;
-  aiConfidence: string;
-  compositeScore: string;
-}
-
-function formatPct(value: number): string {
-  return `${(value * 100).toFixed(1)}%`;
-}
-
-async function computeDrawdownAndFundamentals(
-  ticker: string,
-  market: Market
-): Promise<{ drawdown: DrawdownScoreResult; fundamentals: FundamentalHealthResult }> {
-  if (market === "US") {
-    const [drawdown, fundamentals] = await Promise.all([
-      computeDrawdownScore(ticker),
-      computeFundamentalHealthScore(ticker),
-    ]);
-    return { drawdown, fundamentals };
-  }
-
-  const drawdown = await computeDrawdownScoreEodhd(ticker, market);
-  const fundamentals = unavailableFundamentalHealth(
-    ticker,
-    "EODHD: fundamenty niedostępne na darmowym planie dla rynków PL/EU (403 - tylko EOD)"
-  );
-  return { drawdown, fundamentals };
-}
-
-async function screenSymbol(ticker: string, market: Market): Promise<CompositeScoreResult> {
-  const { drawdown, fundamentals } = await computeDrawdownAndFundamentals(ticker, market);
-
-  let aiClassification: CompositeScoreResult["aiClassification"] = null;
-  try {
-    aiClassification = await classifyDrawdownCause({
-      symbol: ticker,
-      companyName: drawdown.companyName,
-      sector: drawdown.sector,
-      market,
-      priceDrawdownPct: drawdown.excessDrawdown,
-    });
-  } catch (error) {
-    console.log(
-      `  [Warstwa 3] ${ticker}: klasyfikacja AI nieudana (${
-        error instanceof Error ? error.message : String(error)
-      }).`
-    );
-  }
-
-  const scoreBreakdown = computeCompositeScore(
-    drawdown,
-    fundamentals,
-    aiClassification?.aiCauseWeight ?? null
-  );
-
-  return { symbol: ticker, drawdown, fundamentals, aiClassification, scoreBreakdown };
-}
+import type { Market } from "../scoring/types";
+import { ACTIVE_STRATEGIES } from "./strategies";
+import type { ScreenerCandidate } from "./strategies/types";
 
 async function main(): Promise<void> {
   const allMarketWatchlists: { market: Market; tickers: string[] }[] = [
@@ -87,75 +20,43 @@ async function main(): Promise<void> {
   console.log(
     `Screener startuje: ${marketWatchlists.map((w) => `${w.market}=[${w.tickers.join(", ")}]`).join(" | ")}`
   );
-  console.log(`Dostawca AI (Warstwa 3): ${env.aiProvider}\n`);
+  console.log(`Strategie: ${ACTIVE_STRATEGIES.map((s) => s.label).join(", ")}`);
+  console.log(`Dostawca AI: ${env.aiProvider}\n`);
 
-  const rows: ScreenerRow[] = [];
-  const results: CompositeScoreResult[] = [];
-  const errors: { ticker: string; message: string }[] = [];
+  const candidates: ScreenerCandidate[] = [];
 
-  for (const { market, tickers } of marketWatchlists) {
-    for (const ticker of tickers) {
+  for (const strategy of ACTIVE_STRATEGIES) {
+    for (const { market, tickers } of marketWatchlists) {
       try {
-        const result = await screenSymbol(ticker, market);
-        results.push(result);
-
-        let livePriceLabel = result.drawdown.currentPrice.toFixed(2);
-        if (market === "US") {
-          try {
-            const quote = await getQuote(ticker);
-            livePriceLabel = quote.c.toFixed(2);
-          } catch {
-            // Finnhub niedostępny/limit — używamy ceny z FMP jako fallback, bez przerywania.
-          }
-        }
-
-        rows.push({
-          ticker,
-          market,
-          livePrice: livePriceLabel,
-          excessDrawdown: formatPct(result.drawdown.excessDrawdown),
-          excessDrawdownScore: Math.round(result.drawdown.excessDrawdownScore),
-          fundamentalHealthScore: result.fundamentals.available
-            ? String(Math.round(result.fundamentals.fundamentalHealthScore ?? 0))
-            : "brak danych",
-          aiCause: result.aiClassification?.cause ?? "brak (błąd AI)",
-          aiConfidence: result.aiClassification ? `${Math.round(result.aiClassification.confidence * 100)}%` : "-",
-          compositeScore: `${Math.round(result.scoreBreakdown.total * 10) / 10}/${Math.round(result.scoreBreakdown.max)}`,
-        });
+        const found = await strategy.screen(tickers, market);
+        candidates.push(...found);
       } catch (error) {
-        errors.push({ ticker: `${market}:${ticker}`, message: error instanceof Error ? error.message : String(error) });
+        console.log(
+          `  [${strategy.label}/${market}] błąd całej strategii: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        );
       }
     }
   }
 
-  rows.sort((a, b) => parseFloat(b.compositeScore) - parseFloat(a.compositeScore));
+  candidates.sort((a, b) => b.score / b.scoreMax - a.score / a.scoreMax);
 
   console.table(
-    rows.map((r) => ({
-      rynek: r.market,
-      ticker: r.ticker,
-      "cena (live)": r.livePrice,
-      excess_drawdown: r.excessDrawdown,
-      excess_drawdown_score: r.excessDrawdownScore,
-      fundamental_health: r.fundamentalHealthScore,
-      ai_cause: r.aiCause,
-      ai_confidence: r.aiConfidence,
-      "composite_score/max": r.compositeScore,
+    candidates.map((c) => ({
+      strategia: c.strategy,
+      rynek: c.market,
+      ticker: c.symbol,
+      cena: c.currentPrice.toFixed(2),
+      trigger: c.triggerDetail,
+      fundamenty: c.fundamentalAvailable && c.fundamentalHealthScore !== null ? c.fundamentalHealthScore.toFixed(0) : "brak danych",
+      "score/max": `${c.score.toFixed(1)}/${c.scoreMax}`,
     }))
   );
 
-  if (errors.length > 0) {
-    console.log("\nBłędy dla części tickerów (pominięte w tabeli):");
-    for (const err of errors) {
-      console.log(`  ${err.ticker}: ${err.message}`);
-    }
+  if (candidates.length === 0) {
+    console.log("\nBrak kandydatów w tym cyklu (żadna strategia nie wykryła triggera).");
   }
-
-  console.log(
-    `\ncomposite_score/max: suma dostępnych warstw (0.35*drawdown + 0.40*fundamenty[jeśli dostępne] + ` +
-      `0.25*ai[jeśli dostępne]) na tle maksimum możliwego przy dostępnych warstwach. Dla PL/EU fundamenty ` +
-      `są niedostępne (plan EODHD), więc max wynosi 60/100 zamiast 100/100 — to nie błąd.`
-  );
 
   console.log(
     `\nZapytania w tym uruchomieniu — FMP: ${fmpRequestCount} (limit: 250/dzień), ` +
@@ -163,19 +64,19 @@ async function main(): Promise<void> {
   );
 
   try {
-    const saved = await saveScreenerResults(results);
+    const saved = await saveScreenerResults(candidates);
     console.log(
       saved
-        ? `Zapisano ${results.length} wyników do Supabase (tabela screener_results).`
+        ? `Zapisano ${candidates.length} kandydatów do Supabase (tabela screener_results).`
         : "Supabase nieskonfigurowane — pominięto zapis wyników."
     );
   } catch (error) {
     console.log(`Zapis wyników do Supabase nieudany: ${error instanceof Error ? error.message : String(error)}`);
   }
 
-  // Warstwa 0 — ranking branż na bazie bieżącego cyklu (patrz sectorRanking.ts).
+  // Warstwa 0 — ranking branż, tylko na bazie kandydatów Strategii A (patrz sectorRanking.ts).
   try {
-    const sectorRankings = await rankSectors(results);
+    const sectorRankings = await rankSectors(candidates);
     if (sectorRankings.length > 0) {
       console.log("\nRanking branż (Warstwa 0):");
       console.table(
@@ -190,7 +91,7 @@ async function main(): Promise<void> {
           : "Supabase nieskonfigurowane — pominięto zapis rankingu branż."
       );
     } else {
-      console.log("\nRanking branż pominięty (brak spółek z przypisanym sektorem w tym cyklu).");
+      console.log("\nRanking branż pominięty (brak kandydatów Strategii A z przypisanym sektorem).");
     }
   } catch (error) {
     console.log(`\nRanking branż nieudany: ${error instanceof Error ? error.message : String(error)}`);

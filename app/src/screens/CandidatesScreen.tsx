@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from "react-native";
-import { getCandidates, getSectorRankings, type Candidate, type Market, type SectorRanking } from "../services/api";
-
-const CAUSE_LABELS: Record<string, string> = {
-  market_overreaction: "Przesadzona reakcja rynku",
-  fundamental_deterioration: "Pogorszenie fundamentów",
-  structural_geopolitical_risk: "Ryzyko strukturalne/geopolityczne",
-};
+import {
+  getCandidates,
+  getSectorRankings,
+  STRATEGY_LABELS,
+  type Candidate,
+  type Market,
+  type SectorRanking,
+} from "../services/api";
 
 const MARKET_FILTERS: { value: Market | "ALL"; label: string }[] = [
   { value: "ALL", label: "Wszystkie" },
@@ -14,10 +15,6 @@ const MARKET_FILTERS: { value: Market | "ALL"; label: string }[] = [
   { value: "EU", label: "Europa" },
   { value: "US", label: "USA" },
 ];
-
-function formatPct(value: number): string {
-  return `${(value * 100).toFixed(1)}%`;
-}
 
 function CandidateCard({ item }: { item: Candidate }) {
   return (
@@ -30,27 +27,27 @@ function CandidateCard({ item }: { item: Candidate }) {
           {item.compositeScore.toFixed(1)}/{item.compositeScoreMax}
         </Text>
       </View>
+      <View style={styles.strategyBadge}>
+        <Text style={styles.strategyBadgeText}>{STRATEGY_LABELS[item.strategy]}</Text>
+      </View>
       <Text style={styles.companyName}>
         {item.companyName} · {item.sector ?? "sektor nieznany"}
       </Text>
       <View style={styles.metricsRow}>
         <Text style={styles.metric}>Cena: {item.currentPrice.toFixed(2)}</Text>
-        <Text style={styles.metric}>Excess drawdown: {formatPct(item.excessDrawdown)}</Text>
-      </View>
-      <View style={styles.metricsRow}>
         <Text style={styles.metric}>
           Fundamenty: {item.fundamentalAvailable && item.fundamentalHealthScore !== null
             ? `${item.fundamentalHealthScore.toFixed(0)}/100`
             : "brak danych"}
         </Text>
-        {item.aiCause && (
-          <Text style={styles.metric}>
-            {CAUSE_LABELS[item.aiCause] ?? item.aiCause}
-            {item.aiConfidence !== null ? ` (${Math.round(item.aiConfidence * 100)}%)` : ""}
-          </Text>
-        )}
       </View>
-      {item.aiReasoning && <Text style={styles.reasoning}>{item.aiReasoning}</Text>}
+      <Text style={styles.triggerDetail}>{item.triggerDetail}</Text>
+      {item.aiReasoning && (
+        <Text style={styles.reasoning}>
+          {item.aiReasoning}
+          {item.aiConfidence !== null ? ` (pewność AI: ${Math.round(item.aiConfidence * 100)}%)` : ""}
+        </Text>
+      )}
     </View>
   );
 }
@@ -156,7 +153,7 @@ export default function CandidatesScreen() {
       style={styles.list}
       contentContainerStyle={filteredCandidates.length === 0 ? styles.centered : undefined}
       data={filteredCandidates}
-      keyExtractor={(item) => `${item.market}:${item.symbol}`}
+      keyExtractor={(item) => `${item.market}:${item.symbol}:${item.strategy}`}
       renderItem={({ item }) => <CandidateCard item={item} />}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       ListHeaderComponent={
@@ -306,9 +303,22 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: "#1a7f37",
   },
+  strategyBadge: {
+    alignSelf: "flex-start",
+    backgroundColor: "#eef2ff",
+    borderRadius: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    marginTop: 4,
+  },
+  strategyBadgeText: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: "#3949ab",
+  },
   companyName: {
     color: "#555",
-    marginTop: 2,
+    marginTop: 6,
   },
   metricsRow: {
     flexDirection: "row",
@@ -318,6 +328,11 @@ const styles = StyleSheet.create({
   metric: {
     fontSize: 13,
     color: "#333",
+  },
+  triggerDetail: {
+    marginTop: 6,
+    fontSize: 12,
+    color: "#888",
   },
   reasoning: {
     marginTop: 8,
