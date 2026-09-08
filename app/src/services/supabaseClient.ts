@@ -1,12 +1,15 @@
-import { createClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
 const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
 
-if (!supabaseUrl || !supabaseAnonKey) {
-  throw new Error(
-    "Brak EXPO_PUBLIC_SUPABASE_URL / EXPO_PUBLIC_SUPABASE_ANON_KEY. Skopiuj app/.env.example do app/.env i uzupełnij."
-  );
-}
+export const isSupabaseConfigured = Boolean(supabaseUrl && supabaseAnonKey);
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+// Nie rzucamy tu błędu przy braku konfiguracji — na poziomie modułu wywaliłoby
+// to całą aplikację przed pierwszym renderem (biały ekran / natychmiastowe
+// zamknięcie na urządzeniu, bez żadnego czytelnego komunikatu). Brak konfiguracji
+// obsługujemy w miejscu wywołania (CandidatesScreen), gdzie da się to pokazać
+// jako zwykły stan błędu w UI.
+export const supabase: SupabaseClient | null = isSupabaseConfigured
+  ? createClient(supabaseUrl!, supabaseAnonKey!)
+  : null;

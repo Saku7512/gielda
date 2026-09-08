@@ -1,5 +1,15 @@
 import { supabase } from "./supabaseClient";
 
+export class SupabaseNotConfiguredError extends Error {
+  constructor() {
+    super(
+      "Brak konfiguracji Supabase (EXPO_PUBLIC_SUPABASE_URL / EXPO_PUBLIC_SUPABASE_ANON_KEY). " +
+        "Ustaw je w app/.env (lokalnie) lub jako EAS environment variables (w buildzie EAS)."
+    );
+    this.name = "SupabaseNotConfiguredError";
+  }
+}
+
 export interface Candidate {
   symbol: string;
   companyName: string;
@@ -55,6 +65,10 @@ function toCandidate(row: ScreenerResultRow): Candidate {
  * patrz backend/src/db/schema.sql), posortowany po najlepszym wyniku.
  */
 export async function getCandidates(): Promise<Candidate[]> {
+  if (!supabase) {
+    throw new SupabaseNotConfiguredError();
+  }
+
   const { data, error } = await supabase
     .from("screener_latest_results")
     .select(
