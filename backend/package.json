@@ -1,0 +1,25 @@
+{
+  "name": "gielda-backend",
+  "version": "0.1.0",
+  "description": "Screener + monitoring backend for AI stock advisor app",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "screener:run": "tsx src/screener/runScreener.ts"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.0",
+    "@anthropic-ai/sdk": "^0.30.0",
+    "axios": "^1.7.0",
+    "dotenv": "^16.4.0",
+    "node-cron": "^3.0.3"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/node-cron": "^3.0.11",
+    "tsx": "^4.16.0",
+    "typescript": "^5.5.0"
+  }
+}

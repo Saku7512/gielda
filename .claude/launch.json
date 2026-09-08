@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "expo-app-web",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "app", "run", "web", "--", "--port", "8090"],
+      "port": 8090,
+      "autoPort": false
+    }
+  ]
+}
