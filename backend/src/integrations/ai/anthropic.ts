@@ -19,19 +19,24 @@ export class AnthropicClient implements AiClassifierClient {
     return this.client;
   }
 
-  async classify(input: ClassificationInput): Promise<ClassificationOutput> {
+  async completeJson(systemPrompt: string, userPrompt: string): Promise<string> {
     const message = await this.getClient().messages.create({
       model: env.anthropicModel,
-      max_tokens: 512,
+      max_tokens: 1024,
       temperature: 0.2,
-      system: SYSTEM_PROMPT,
-      messages: [{ role: "user", content: buildUserPrompt(input) }],
+      system: systemPrompt,
+      messages: [{ role: "user", content: userPrompt }],
     });
 
     const textBlock = message.content.find((block) => block.type === "text");
     if (!textBlock || textBlock.type !== "text") {
       throw new Error("Anthropic: odpowiedź nie zawiera bloku tekstowego");
     }
-    return parseClassificationJson(textBlock.text, "Anthropic");
+    return textBlock.text;
+  }
+
+  async classify(input: ClassificationInput): Promise<ClassificationOutput> {
+    const text = await this.completeJson(SYSTEM_PROMPT, buildUserPrompt(input));
+    return parseClassificationJson(text, "Anthropic");
   }
 }

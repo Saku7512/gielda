@@ -1,7 +1,7 @@
 import { getAiClassifierClient } from "../integrations/ai";
 import type { DrawdownCause } from "../integrations/ai/types";
 import { getCompanyNews } from "../integrations/finnhub";
-import type { AiClassificationResult } from "./types";
+import type { AiClassificationResult, Market } from "./types";
 
 // Wagi z CLAUDE.md (sekcja "Warstwa 3"): market_overreaction -> wysoka waga
 // pozytywna, fundamental_deterioration -> odrzucić, structural_geopolitical_risk
@@ -15,7 +15,10 @@ const CAUSE_WEIGHTS: Record<DrawdownCause, number> = {
 const NEWS_LOOKBACK_DAYS = 14;
 const MAX_NEWS_HEADLINES = 8;
 
-async function fetchNewsHeadlines(symbol: string) {
+async function fetchNewsHeadlines(symbol: string, market: Market) {
+  // Finnhub /company-news jest de facto rynkiem US — dla PL/EU zwraca błąd
+  // (zweryfikowane empirycznie), więc nie marnujemy na to zapytania.
+  if (market !== "US") return [];
   try {
     const to = new Date();
     const from = new Date();
@@ -41,16 +44,17 @@ async function fetchNewsHeadlines(symbol: string) {
 export async function classifyDrawdownCause(params: {
   symbol: string;
   companyName: string;
-  sector: string;
+  sector: string | null;
+  market: Market;
   priceDrawdownPct: number;
 }): Promise<AiClassificationResult> {
-  const newsHeadlines = await fetchNewsHeadlines(params.symbol);
+  const newsHeadlines = await fetchNewsHeadlines(params.symbol, params.market);
   const client = getAiClassifierClient();
 
   const result = await client.classify({
     symbol: params.symbol,
     companyName: params.companyName,
-    sector: params.sector,
+    sector: params.sector ?? "nieznany",
     priceDrawdownPct: params.priceDrawdownPct,
     newsHeadlines,
   });

@@ -150,5 +150,15 @@ export async function computeFundamentalHealthScore(symbol: string): Promise<Fun
 
   const fundamentalHealthScore = (checks.filter((c) => c.passed).length / checks.length) * 100;
 
-  return { symbol, checks, fundamentalHealthScore };
+  return { symbol, available: true, checks, fundamentalHealthScore };
+}
+
+/**
+ * PL/EU: darmowy plan EODHD zwraca 403 na /fundamentals ("Only EOD data
+ * allowed for free users") — Warstwa 2 nie może się wykonać. Zwracamy to
+ * jawnie zamiast fabrykować dane, żeby compositeScore mógł to poprawnie
+ * pominąć (patrz compositeScore.ts).
+ */
+export function unavailableFundamentalHealth(symbol: string, reason: string): FundamentalHealthResult {
+  return { symbol, available: false, checks: [], fundamentalHealthScore: null, unavailableReason: reason };
 }

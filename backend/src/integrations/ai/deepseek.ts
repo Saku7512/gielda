@@ -9,7 +9,7 @@ import type { AiClassifierClient, ClassificationInput, ClassificationOutput } fr
 const BASE_URL = "https://api.deepseek.com";
 
 export class DeepSeekClient implements AiClassifierClient {
-  async classify(input: ClassificationInput): Promise<ClassificationOutput> {
+  async completeJson(systemPrompt: string, userPrompt: string): Promise<string> {
     if (!env.deepseekApiKey) {
       throw new Error("DEEPSEEK_API_KEY nie jest ustawiony w backend/.env");
     }
@@ -20,8 +20,8 @@ export class DeepSeekClient implements AiClassifierClient {
         {
           model: env.deepseekModel,
           messages: [
-            { role: "system", content: SYSTEM_PROMPT },
-            { role: "user", content: buildUserPrompt(input) },
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userPrompt },
           ],
           temperature: 0.2,
           response_format: { type: "json_object" },
@@ -37,6 +37,11 @@ export class DeepSeekClient implements AiClassifierClient {
     if (!content) {
       throw new Error("DeepSeek: pusta odpowiedź modelu");
     }
+    return content;
+  }
+
+  async classify(input: ClassificationInput): Promise<ClassificationOutput> {
+    const content = await this.completeJson(SYSTEM_PROMPT, buildUserPrompt(input));
     return parseClassificationJson(content, "DeepSeek");
   }
 }

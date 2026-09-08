@@ -75,8 +75,8 @@ Trigger na pogorszenie fundamentów jest ważniejszy niż sam ruch ceny:
 ```
 /backend
   /src
-    /integrations   - klienci API (finnhub.ts, fmp.ts)
-    /scoring         - drawdown.ts, fundamentals.ts, aiClassifier.ts, compositeScore.ts
+    /integrations   - klienci API (finnhub.ts, fmp.ts, eodhd.ts, ai/)
+    /scoring         - drawdown.ts, fundamentals.ts, aiClassifier.ts, compositeScore.ts, sectorRanking.ts
     /screener        - runScreener.ts (główny pipeline)
     /jobs            - cron.ts, portfolioMonitor.ts
     /db              - schema.sql, klient supabase
@@ -93,6 +93,53 @@ Trigger na pogorszenie fundamentów jest ważniejszy niż sam ruch ceny:
 3. Zapis wyników do Supabase + prosty ekran w Expo wyświetlający listę kandydatów
 4. Portfel użytkownika + monitoring pozycji + push notifications
 5. Pełna automatyzacja 24/7 (cron + alerty)
+
+## Rozszerzenie: rynki PL/EU (dodane po MVP US) — zaimplementowane
+
+### Model danych — nowe pola (screener_results)
+- `market`: "PL" | "EU" | "US"
+- `exchange`: "US" dla rynku US, albo kod EODHD dla PL/EU: "WAR" (GPW), "XETRA", "PA" (Euronext Paris), "AS" (Euronext Amsterdam)
+- `symbol`: dla PL/EU trzymany W CAŁOŚCI z sufiksem giełdy (np. "PKN.WAR", nie samo "PKN") —
+  odstępstwo od pierwotnego planu: EODHD i tak wymaga pełnego "SYMBOL.EXCHANGE" przy każdym
+  wywołaniu, a watchlisty w .env już są w tym formacie, więc trzymanie surowego kodu bez sufiksu
+  tylko dodawałoby zbędne parsowanie w tę i z powrotem.
+
+### Źródła danych per rynek
+- US: Finnhub + FMP (bez zmian)
+- PL / EU: EODHD — `/backend/src/integrations/eodhd.ts`
+- Watchlisty per rynek w .env: `WATCHLIST_US`, `WATCHLIST_PL`, `WATCHLIST_EU` (PL/EU w formacie `TICKER.EXCHANGE`)
+
+### Zweryfikowane empirycznie ograniczenia (2026-09-08, plan EODHD z limitem ~20 zapytań/dzień)
+- `GET /eod/{SYMBOL}.{EXCHANGE}` działa (dzienne OHLCV) — na tym opiera się Warstwa 1 dla PL/EU
+- `GET /fundamentals/{SYMBOL}.{EXCHANGE}` zwraca `403 Only EOD data allowed for free users` —
+  **Warstwa 2 (fundamenty) jest niedostępna dla PL/EU** na tym planie. `fundamental_health_score`
+  jest wtedy `null`, a `composite_score_max` spada ze 100 do 60 (brakuje wagi 0.40) — to
+  zamierzone zachowanie, nie błąd; patrz `scoring/compositeScore.ts`
+- Brak zweryfikowanego symbolu indeksu benchmarkowego (np. WIG20) w EODHD — `excess_drawdown` dla
+  PL/EU to surowy drawdown bez beta-adjustmentu względem benchmarku (beta=1, benchmark=null).
+  Nie zgadywano symbolu indeksu; do zweryfikowania później, jeśli plan na to pozwoli
+- Sektor (`sector`) jest `null` dla PL/EU — `exchange-symbol-list` (jedyny darmowy endpoint z
+  metadanymi spółki) nie zwraca sektora, tylko fundamenty by go dały. Spółki bez sektora są
+  pomijane w rankingu branż (Warstwa 0)
+- Finnhub `/company-news` nie pokrywa GPW (zweryfikowane: 403/puste dane) — Warstwa 3 dla PL/EU
+  klasyfikuje bez kontekstu newsowego (ten sam fallback co przy braku klucza Finnhub)
+
+### UI
+Filtr rynku w CandidatesScreen (chipy: Polska / Europa / USA / Wszystkie) + karta rankingu branż
+na górze (patrz Warstwa 0), klikalna do filtrowania listy po sektorze.
+
+## Warstwa 0 — ranking branż (dodane po MVP)
+Osobny moduł `/backend/src/scoring/sectorRanking.ts`, uruchamiany na końcu każdego cyklu screenera
+(na razie ręcznie/na żądanie razem z `runScreener.ts` — **bez osobnego crona**, bo cron w ogóle
+nie jest jeszcze zbudowany, patrz MVP krok 5; dodanie osobnego joba przed tym byłoby przedwczesne)
+- Agreguje z bieżącego cyklu: średni `excess_drawdown_score` i średni `fundamental_health_score`
+  per sektor (spółki bez sektora — PL/EU — są pomijane, patrz wyżej)
+- **Bez newsów makro/geopolitycznych** — RSS z sekcji "Źródła danych" nie jest zaimplementowane,
+  więc model AI rankuje wyłącznie na podstawie zagregowanych liczb z bieżącego cyklu, nie
+  bieżących wydarzeń. To udokumentowane uproszczenie, nie pominięcie przez przeoczenie
+- Model AI (ten sam dostawca co Warstwa 3) zwraca JSON: `[{ sector, rank, score, reasoning }]`
+- Zapis do Supabase: tabela `sector_rankings` (insert-only, jak `screener_results`), widok
+  `sector_rankings_latest` dla apki
 
 ## Uwagi dla Claude Code
 - Zacznij od `/backend`, warstwa po warstwie zgodnie z sekcją MVP powyżej — nie buduj wszystkiego naraz

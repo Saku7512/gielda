@@ -3,9 +3,11 @@ import type { CompositeScoreResult } from "../scoring/types";
 import { getSupabaseClient } from "./supabaseClient";
 
 function toRow(result: CompositeScoreResult) {
-  const { drawdown, fundamentals, aiClassification } = result;
+  const { drawdown, fundamentals, aiClassification, scoreBreakdown } = result;
   return {
     symbol: result.symbol,
+    market: drawdown.market,
+    exchange: drawdown.exchange,
     company_name: drawdown.companyName,
     sector: drawdown.sector,
     current_price: drawdown.currentPrice,
@@ -14,14 +16,15 @@ function toRow(result: CompositeScoreResult) {
     excess_drawdown: drawdown.excessDrawdown,
     excess_drawdown_score: drawdown.excessDrawdownScore,
     rsi14: drawdown.rsi14,
+    fundamental_available: fundamentals.available,
     fundamental_health_score: fundamentals.fundamentalHealthScore,
     fundamental_checks: fundamentals.checks,
     ai_provider: aiClassification ? env.aiProvider : null,
     ai_cause: aiClassification?.cause ?? null,
     ai_confidence: aiClassification?.confidence ?? null,
     ai_reasoning: aiClassification?.reasoning ?? null,
-    composite_score_partial: result.compositeScorePartial,
-    composite_score: result.compositeScore,
+    composite_score: scoreBreakdown.total,
+    composite_score_max: scoreBreakdown.max,
   };
 }
 

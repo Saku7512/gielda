@@ -26,4 +26,6 @@ export interface ClassificationOutput {
 
 export interface AiClassifierClient {
   classify(input: ClassificationInput): Promise<ClassificationOutput>;
+  /** Surowe wywołanie system+user -> tekst odpowiedzi (JSON), do ponownego użycia poza klasyfikacją przyczyny (np. sectorRanking.ts). */
+  completeJson(systemPrompt: string, userPrompt: string): Promise<string>;
 }

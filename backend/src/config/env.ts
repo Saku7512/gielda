@@ -38,7 +38,13 @@ export const env = {
   finnhubApiKey: optionalEnv("FINNHUB_API_KEY"),
   fmpApiKey: requireEnv("FMP_API_KEY"),
   screenerCron: process.env.SCREENER_CRON ?? "0 * 14-21 * * 1-5",
-  watchlist: parseWatchlist(process.env.WATCHLIST ?? ""),
+
+  // Watchlisty per rynek — US: bare tickery (np. "AAPL"), PL/EU: ticker.EXCHANGE
+  // w formacie EODHD (np. "PKN.WAR", "SAP.XETRA"). WATCHLIST bez sufiksu to
+  // wsteczna kompatybilność — traktowana jak WATCHLIST_US, gdy ta jest pusta.
+  watchlistUs: parseWatchlist(process.env.WATCHLIST_US ?? process.env.WATCHLIST ?? ""),
+  watchlistPl: parseWatchlist(process.env.WATCHLIST_PL ?? ""),
+  watchlistEu: parseWatchlist(process.env.WATCHLIST_EU ?? ""),
 
   // Warstwa 3 (klasyfikacja AI) — dostawca wybieralny przez AI_PROVIDER, żeby
   // łatwo przełączać się między DeepSeek/Claude/Gemini bez zmian w kodzie.
@@ -56,11 +62,20 @@ export const env = {
   // (runScreener dalej wypisuje tabelę w konsoli).
   supabaseUrl: optionalEnv("SUPABASE_URL"),
   supabaseServiceRoleKey: optionalEnv("SUPABASE_SERVICE_ROLE_KEY"),
+
+  // Rynki PL/EU (GPW, XETRA, Euronext) — patrz CLAUDE.md. Plan ma bardzo
+  // ciasny limit zapytań (~20), więc opcjonalny na tym etapie.
+  eodhdApiKey: optionalEnv("EODHD_API_KEY"),
 };
 
-if (env.watchlist.length === 0) {
+if (env.watchlistUs.length === 0 && env.watchlistPl.length === 0 && env.watchlistEu.length === 0) {
   throw new Error(
-    "WATCHLIST w backend/.env jest pusta. Podaj listę tickerów oddzielonych przecinkami."
+    "Wszystkie watchlisty (WATCHLIST_US/PL/EU) w backend/.env są puste. Podaj przynajmniej jedną."
+  );
+}
+if ((env.watchlistPl.length > 0 || env.watchlistEu.length > 0) && !env.eodhdApiKey) {
+  throw new Error(
+    "WATCHLIST_PL/WATCHLIST_EU nie jest puste, ale brakuje EODHD_API_KEY w backend/.env."
   );
 }
 
